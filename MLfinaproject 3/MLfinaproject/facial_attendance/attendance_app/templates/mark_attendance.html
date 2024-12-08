@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mark Attendance</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #333;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+
+        #message {
+            margin: 10px 0;
+            padding: 10px;
+            font-size: 16px;
+            background-color: #e7f5e6;
+            border: 1px solid #c4e3c3;
+            border-radius: 5px;
+            color: #4CAF50;
+            width: 80%;
+            text-align: center;
+        }
+
+        #camera-section {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+            width: fit-content;
+        }
+
+        video {
+            border-radius: 10px;
+            border: 2px solid #4CAF50;
+            display: block;
+            margin: auto;
+        }
+
+        #confirmation-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            text-align: center;
+            max-width: 90%;
+            width: 400px;
+        }
+
+        #modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+
+        #confirmation-message {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #f4f4f4;
+        }
+
+        #confirm-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        #confirm-btn:hover {
+            background-color: #45a049;
+        }
+
+        #cancel-btn {
+            background-color: #f44336;
+            color: white;
+        }
+
+        #cancel-btn:hover {
+            background-color: #e31e14;
+        }
+    </style>
+</head>
+<body>
+    <h1>Mark Attendance</h1>
+    <p id="message">Initializing camera...</p>
+
+    <!-- Camera Section -->
+    <div id="camera-section">
+        <video id="video" width="640" height="480" autoplay></video>
+        <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="modal-overlay"></div>
+    <div id="confirmation-modal">
+        <p id="confirmation-message"></p>
+        <button id="confirm-btn">Confirm</button>
+        <button id="cancel-btn">Cancel</button>
+    </div>
+
+    <script>
+        // The JavaScript logic remains unchanged
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const messageDiv = document.getElementById("message");
+        const modalOverlay = document.getElementById("modal-overlay");
+        const confirmationModal = document.getElementById("confirmation-modal");
+        const confirmationMessage = document.getElementById("confirmation-message");
+        const confirmBtn = document.getElementById("confirm-btn");
+        const cancelBtn = document.getElementById("cancel-btn");
+
+        let recognitionRunning = true;
+        let recognizedName = "";
+        let recognitionIntervalId = null;
+
+        function startWebcam() {
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+                    messageDiv.textContent = "Camera is ready. Looking for your face...";
+                    startRecognition();
+                })
+                .catch(err => {
+                    console.error("Error accessing webcam:", err);
+                    messageDiv.textContent = "Unable to access webcam. Please check permissions.";
+                });
+        }
+
+        function startRecognition() {
+            recognitionRunning = true;
+            const context = canvas.getContext("2d");
+
+            recognitionIntervalId = setInterval(() => {
+                if (!recognitionRunning) {
+                    clearInterval(recognitionIntervalId);
+                    return;
+                }
+
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                canvas.toBlob(blob => {
+                    const formData = new FormData();
+                    formData.append("image", blob, "captured_frame.jpg");
+
+                    fetch("/mark-attendance/", {
+                        method: "POST",
+                        body: formData,
+                        headers: {
+                            "X-CSRFToken": getCSRFToken(),
+                        },
+                    })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.message.includes("recognized")) {
+                                recognizedName = data.name;
+                                showConfirmationModal(data.message);
+                            } else {
+                                messageDiv.textContent = data.message;
+                            }
+                        })
+                        .catch(err => {
+                            console.error("Error during recognition:", err);
+                            messageDiv.textContent = "An error occurred. Please try again.";
+                        });
+                });
+            }, 3000);
+        }
+
+        function showConfirmationModal(message) {
+            messageDiv.textContent = "";
+            confirmationMessage.textContent = message;
+            modalOverlay.style.display = "block";
+            confirmationModal.style.display = "block";
+            stopRecognition();
+        }
+
+        confirmBtn.addEventListener("click", () => {
+            fetch("/mark-attendance/", {
+                method: "POST",
+                body: JSON.stringify({ name: recognizedName, confirm: true }),
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken(),
+                },
+            })
+                .then(response => response.json())
+                .then(data => {
+                    messageDiv.textContent = data.message;
+                })
+                .catch(err => {
+                    console.error("Error confirming attendance:", err);
+                    messageDiv.textContent = "An error occurred. Please try again.";
+                });
+
+            closeModal();
+        });
+
+        cancelBtn.addEventListener("click", () => {
+            messageDiv.textContent = "Recognition cancelled. Looking for a new face...";
+            closeModal();
+            restartRecognition();
+        });
+
+        function restartRecognition() {
+            clearInterval(recognitionIntervalId);
+            recognitionRunning = true;
+            startRecognition();
+        }
+
+        function closeModal() {
+            modalOverlay.style.display = "none";
+            confirmationModal.style.display = "none";
+        }
+
+        function stopRecognition() {
+            recognitionRunning = false;
+            clearInterval(recognitionIntervalId);
+        }
+
+        function getCSRFToken() {
+            const cookies = document.cookie.split(";");
+            for (let cookie of cookies) {
+                if (cookie.trim().startsWith("csrftoken=")) {
+                    return cookie.trim().split("=")[1];
+                }
+            }
+            return null;
+        }
+
+        startWebcam();
+    </script>
+</body>
+</html>
