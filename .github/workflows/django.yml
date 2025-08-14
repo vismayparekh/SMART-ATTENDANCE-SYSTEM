@@ -1,4 +1,4 @@
-name: Django CI
+name: Django CI (no tests)
 
 on:
   push:
@@ -31,22 +31,39 @@ jobs:
             pip install django
           fi
 
+      # 🔎 Find the directory that contains manage.py
+      - name: Locate Django project dir
+        id: locate
+        shell: bash
+        run: |
+          set -e
+          FILE_PATH="$(git ls-files | grep -E '(^|/)manage\.py$' | head -n1 || true)"
+          if [ -z "$FILE_PATH" ]; then
+            echo "Could not find manage.py anywhere in the repo." >&2
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$FILE_PATH")"
+          # normalize "." for root
+          [ "$PROJECT_DIR" = "." ] && PROJECT_DIR="$PWD" || PROJECT_DIR="$PWD/$PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Using project_dir=$PROJECT_DIR"
+
       - name: Quick project health check
+        working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
           python - <<'PY'
-          import os, sys
-          import django
-          print("Python OK")
+          import sys, django, pathlib
+          print("Python OK:", sys.version)
           print("Django", django.get_version())
-          assert os.path.isfile("manage.py"), "manage.py not found at repo root"
+          assert (pathlib.Path("manage.py")).is_file(), "manage.py not found in working dir"
           PY
 
       - name: Django system check
-        # This validates settings/apps load. If your settings need env vars,
-        # set them here via `env:` to avoid failures.
+        working-directory: ${{ steps.locate.outputs.project_dir }}
         run: python manage.py check
 
       - name: Run unit tests (only if they exist)
+        working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
           if ls **/tests.py **/tests/*.py 2>/dev/null; then
             echo "Tests found. Running..."
